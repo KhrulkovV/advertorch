@@ -563,3 +563,68 @@ class FastFeatureAttack(Attack):
         xadv = clamp(xadv, self.clip_min, self.clip_max)
 
         return xadv.data
+
+class L2FeatureAttack(Attack):
+    """
+    Fast attack against a target internal representation of a model using
+    gradient descent (Sabour et al. 2016).
+    Paper: https://arxiv.org/abs/1511.05122
+
+    :param predict: forward pass function.
+    :param loss_fn: loss function.
+    :param eps: maximum distortion.
+    :param eps_iter: attack step size.
+    :param nb_iter: number of iterations
+    :param clip_min: mininum value per input dimension.
+    :param clip_max: maximum value per input dimension.
+    """
+
+    def __init__(self, predict, loss_fn=None, eps=0.3, eps_iter=0.05,
+                 nb_iter=10, rand_init=True, clip_min=0., clip_max=1.):
+        """Create an instance of the FastFeatureAttack."""
+        super(L2FeatureAttack, self).__init__(
+            predict, loss_fn, clip_min, clip_max)
+        self.eps = eps
+        self.eps_iter = eps_iter
+        self.nb_iter = nb_iter
+        self.rand_init = rand_init
+        self.clip_min = clip_min
+        self.clip_max = clip_max
+        if self.loss_fn is None:
+            self.loss_fn = nn.MSELoss(reduction="sum")
+
+    def perturb(self, source, delta=None):
+        """
+        Given source, returns their adversarial counterparts
+        with representations close to that of the guide.
+
+        :param source: input tensor which we want to perturb.
+        :param guide: targeted input.
+        :param delta: tensor contains the random initialization.
+        :return: tensor containing perturbed inputs.
+        """
+        # Initialization
+        if delta is None:
+            delta = torch.zeros_like(source)
+            if self.rand_init:
+                delta = delta.uniform_(-self.eps, self.eps)
+        else:
+            delta = delta.detach()
+
+        delta.requires_grad_()
+
+        source = replicate_input(source)
+        guide = replicate_input(source)
+        guide_ftr = self.predict(guide).detach()
+
+        xadv = perturb_iterative(source, guide_ftr, self.predict,
+                                 self.nb_iter, eps_iter=self.eps_iter,
+                                 loss_fn=self.loss_fn, minimize=False,
+                                 ord=np.inf, eps=self.eps,
+                                 clip_min=self.clip_min,
+                                 clip_max=self.clip_max,
+                                 delta_init=delta)
+
+        xadv = clamp(xadv, self.clip_min, self.clip_max)
+
+        return xadv.data
